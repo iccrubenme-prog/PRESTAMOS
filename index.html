@@ -170,6 +170,27 @@ button{font-family:inherit;}
 .field.readonly input,.field.readonly textarea{background:var(--gray-soft);color:var(--text-soft);border-color:var(--gray-soft);}
 .lock-tag{font-size:11.5px;font-weight:700;color:var(--text-soft);background:var(--gray-soft);
   border-radius:6px;padding:2px 7px;margin-left:6px;display:inline-block;vertical-align:middle;}
+
+/* ---- pantalla de configuración de campos ---- */
+.cfg-intro{padding:14px 16px;color:var(--text-soft);font-size:13.5px;line-height:1.5;}
+.cfg-card{padding:16px;margin-bottom:12px;}
+.cfg-card .cfg-nombre{font-weight:800;font-size:15.5px;margin-bottom:2px;}
+.cfg-card .cfg-ayuda{font-size:12.5px;color:var(--text-soft);margin-bottom:12px;}
+.cfg-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;}
+.cfg-group-label{font-size:11px;font-weight:800;color:var(--text-soft);text-transform:uppercase;
+  letter-spacing:.3px;margin:4px 0 2px;grid-column:1 / -1;}
+.cfg-switch-row{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:var(--bg);border-radius:10px;padding:9px 12px;}
+.cfg-switch-row span{font-size:13.5px;font-weight:600;}
+.cfg-switch{position:relative;width:42px;height:24px;flex:none;}
+.cfg-switch input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:1;}
+.cfg-switch .track{position:absolute;inset:0;background:var(--gray-soft);border-radius:999px;
+  transition:background .15s ease;border:2px solid var(--border);}
+.cfg-switch .thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s ease;}
+.cfg-switch input:checked + .track{background:var(--green);border-color:var(--green);}
+.cfg-switch input:checked + .track + .thumb{transform:translateX(18px);}
+.cfg-switch input:disabled + .track{opacity:.5;cursor:not-allowed;}
 .pass-row{position:relative;}
 .pass-row input{padding-right:76px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.5px;}
 .pass-toggle{position:absolute;right:6px;top:6px;bottom:6px;border:none;background:var(--primary-soft);
@@ -236,6 +257,7 @@ footer.note{text-align:center;color:var(--text-soft);font-size:12px;margin-top:2
     </div>
     <div class="topbar-actions">
       <span class="role-badge" id="roleBadge"></span>
+      <button class="icon-btn" id="configBtn" title="Configurar campos">⚙️</button>
       <button class="icon-btn" id="exportBtn" title="Descargar respaldo">⬇️</button>
       <button class="icon-btn" id="logoutBtn" title="Cerrar sesión">🔒 Salir</button>
     </div>
@@ -258,6 +280,7 @@ footer.note{text-align:center;color:var(--text-soft);font-size:12px;margin-top:2
     </div>
 
     <div id="screenDetail" class="screen"></div>
+    <div id="screenConfig" class="screen"></div>
 
     <footer class="note">Los cambios se guardan directamente en tu Google Sheet.
       <br><span class="footer-brand">Desarrollado por PrismaVia · M&amp;T Consultores</span></footer>
@@ -416,6 +439,8 @@ function enterApp(nombreRol){
   document.getElementById('appRoot').style.display = 'block';
   const badge = document.getElementById('roleBadge');
   badge.textContent = ROL==='admin' ? '👑 Administrador' : '👁️ ' + (nombreRol||'Visitante');
+  document.getElementById('exportBtn').style.display = ROL==='admin' ? '' : 'none';
+  document.getElementById('configBtn').style.display = ROL==='admin' ? '' : 'none';
   buildDynamicFilters();
   renderResults();
 }
@@ -760,10 +785,96 @@ function openDetail(uid){
 function showSearchScreen(){
   currentDetailUid = null;
   document.getElementById('screenDetail').classList.remove('active');
+  document.getElementById('screenConfig').classList.remove('active');
   document.getElementById('screenSearch').classList.add('active');
   renderResults();
   window.scrollTo(0,0);
 }
+
+/* ============================================================
+   PANTALLA DE CONFIGURACIÓN DE CAMPOS (solo admin)
+   ============================================================ */
+const CONFIG_SWITCHES = [
+  {grupo:'Administrador', columna:'visible_admin', etiqueta:'Visible'},
+  {grupo:'Administrador', columna:'editable_admin', etiqueta:'Editable'},
+  {grupo:'Visitante', columna:'visible_visitante', etiqueta:'Visible'},
+  {grupo:'Visitante', columna:'editable_visitante', etiqueta:'Editable'}
+];
+
+async function showConfigScreen(){
+  document.getElementById('screenSearch').classList.remove('active');
+  document.getElementById('screenDetail').classList.remove('active');
+  document.getElementById('screenConfig').classList.add('active');
+  window.scrollTo(0,0);
+  await renderConfigScreen();
+}
+
+async function renderConfigScreen(){
+  const el = document.getElementById('screenConfig');
+  el.innerHTML = '<div class="card detail-header">'
+    + '<button class="back-btn" id="backBtnConfig">‹ Regresar</button>'
+    + '<div class="name-block"><div class="nm">⚙️ Configuración de campos</div></div>'
+    + '</div>'
+    + '<div class="card cfg-intro">Marca qué campos puede <strong>ver</strong> y <strong>editar</strong> cada rol. Los cambios se guardan solos, al instante, en tu Google Sheet.</div>'
+    + '<div id="cfgList"><div class="center-loading"><span class="big-emoji">⏳</span><p>Cargando configuración...</p></div></div>';
+  document.getElementById('backBtnConfig').addEventListener('click', showSearchScreen);
+
+  try{
+    const resp = await apiGet('config_list');
+    if(!resp.ok){
+      document.getElementById('cfgList').innerHTML = '<div class="card hint-box"><span class="big-emoji">🙁</span><p>No se pudo cargar: '+escapeHtml(resp.error||'error')+'</p></div>';
+      return;
+    }
+    let html = '';
+    resp.campos.forEach(c=>{
+      html += '<div class="card cfg-card" data-clave="'+escapeHtml(c.clave)+'">'
+        + '<div class="cfg-nombre">'+escapeHtml(c.etiqueta||c.clave)+'</div>'
+        + (c.ayuda ? '<div class="cfg-ayuda">'+escapeHtml(c.ayuda)+'</div>' : '')
+        + '<div class="cfg-grid">';
+      let grupoActual = '';
+      CONFIG_SWITCHES.forEach(sw=>{
+        if(sw.grupo !== grupoActual){
+          grupoActual = sw.grupo;
+          html += '<div class="cfg-group-label">'+sw.grupo+'</div>';
+        }
+        const checked = c[sw.columna] ? 'checked' : '';
+        html += '<label class="cfg-switch-row"><span>'+sw.etiqueta+'</span>'
+          + '<span class="cfg-switch"><input type="checkbox" data-columna="'+sw.columna+'" '+checked+'>'
+          + '<span class="track"></span><span class="thumb"></span></span></label>';
+      });
+      html += '</div></div>';
+    });
+    document.getElementById('cfgList').innerHTML = html || '<div class="card hint-box"><p>No hay campos configurados.</p></div>';
+
+    document.querySelectorAll('#cfgList [data-columna]').forEach(input=>{
+      input.addEventListener('change', ()=> handleConfigToggle(input));
+    });
+  }catch(err){
+    document.getElementById('cfgList').innerHTML = '<div class="card hint-box"><span class="big-emoji">🙁</span><p>Sin conexión. No se pudo cargar la configuración.</p></div>';
+  }
+}
+
+async function handleConfigToggle(input){
+  const clave = input.closest('[data-clave]').dataset.clave;
+  const columna = input.dataset.columna;
+  const valor = input.checked;
+  input.disabled = true;
+  try{
+    const resp = await apiPost({action:'config_update', clave, columna, valor});
+    if(!resp.ok){
+      input.checked = !valor;
+      showSaveBanner('No se pudo guardar: ' + (resp.error||'error'), true);
+    }else{
+      showSaveBanner('Guardado', false);
+    }
+  }catch(err){
+    input.checked = !valor;
+    showSaveBanner('Sin conexión: no se guardó el cambio', true);
+  }
+  input.disabled = false;
+}
+
+document.getElementById('configBtn').addEventListener('click', showConfigScreen);
 
 /* ============================================================
    EXPORTAR CSV (solo campos visibles para el rol actual)
